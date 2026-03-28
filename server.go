@@ -9,11 +9,16 @@ import (
 
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		// Parse JSON body into args
 		args := map[string]interface{}{}
 		if r.ContentLength != 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 			if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
-				http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
 				return
 			}
 		}

@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 )
+
+var ntfyClient = &http.Client{Timeout: 30 * time.Second}
 
 func Main(args map[string]interface{}) map[string]interface{} {
 	// In DigitalOcean Functions (OpenWhisk) web actions, HTTP request headers
@@ -25,6 +29,13 @@ func Main(args map[string]interface{}) map[string]interface{} {
 	ntfyURL := getHeader("ntfy_url")
 	if ntfyURL == "" {
 		ntfyURL = "https://ntfy.sh"
+	}
+	if !strings.HasPrefix(ntfyURL, "https://ntfy.") {
+		log.Printf("[webhook-translator] ERROR: rejected ntfy_url (must start with https://ntfy.): %s", ntfyURL)
+		return map[string]interface{}{
+			"statusCode": 400,
+			"body":       "invalid ntfy_url: must start with https://ntfy.",
+		}
 	}
 
 	topic := getHeader("topic")
@@ -49,11 +60,12 @@ func Main(args map[string]interface{}) map[string]interface{} {
 	if imageBase64 == "" {
 		// No picture available — send a plain-text message instead
 		log.Printf("[webhook-translator] no picture found, forwarding text message to %s/%s", strings.TrimRight(ntfyURL, "/"), topic)
-		req, err = http.NewRequest(http.MethodPost, strings.TrimRight(ntfyURL, "/")+"/"+topic, strings.NewReader("No picture"))
+		req, err = http.NewRequest(http.MethodPost, strings.TrimRight(ntfyURL, "/")+"/"+url.PathEscape(topic), strings.NewReader("No picture"))
 		if err != nil {
+			log.Printf("[webhook-translator] ERROR: failed to create request: %v", err)
 			return map[string]interface{}{
 				"statusCode": 500,
-				"body":       "failed to create request: " + err.Error(),
+				"body":       "internal error",
 			}
 		}
 		req.Header.Set("Content-Type", "text/plain")
@@ -71,18 +83,20 @@ func Main(args map[string]interface{}) map[string]interface{} {
 
 		data, decErr := base64.StdEncoding.DecodeString(imageBase64)
 		if decErr != nil {
+			log.Printf("[webhook-translator] ERROR: invalid base64 payload: %v", decErr)
 			return map[string]interface{}{
 				"statusCode": 400,
-				"body":       "invalid base64 payload: " + decErr.Error(),
+				"body":       "invalid image data",
 			}
 		}
 
 		log.Printf("[webhook-translator] picture found (%s, %d bytes), forwarding to %s/%s", filename, len(data), strings.TrimRight(ntfyURL, "/"), topic)
-		req, err = http.NewRequest(http.MethodPut, strings.TrimRight(ntfyURL, "/")+"/"+topic, bytes.NewReader(data))
+		req, err = http.NewRequest(http.MethodPut, strings.TrimRight(ntfyURL, "/")+"/"+url.PathEscape(topic), bytes.NewReader(data))
 		if err != nil {
+			log.Printf("[webhook-translator] ERROR: failed to create request: %v", err)
 			return map[string]interface{}{
 				"statusCode": 500,
-				"body":       "failed to create request: " + err.Error(),
+				"body":       "internal error",
 			}
 		}
 
@@ -101,12 +115,12 @@ func Main(args map[string]interface{}) map[string]interface{} {
 		req.Header.Set("Authorization", auth)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ntfyClient.Do(req)
 	if err != nil {
 		log.Printf("[webhook-translator] ERROR: publish to ntfy failed: %v", err)
 		return map[string]interface{}{
 			"statusCode": 502,
-			"body":       "publish failed: " + err.Error(),
+			"body":       "failed to publish notification",
 		}
 	}
 	defer resp.Body.Close()

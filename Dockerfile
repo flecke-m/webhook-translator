@@ -14,8 +14,11 @@ FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates
 
+RUN addgroup -S app && adduser -S app -G app
+
 WORKDIR /app
 COPY --from=builder /app/webhook-translator .
 
+USER app
 EXPOSE 80
 ENTRYPOINT ["/app/webhook-translator"]
