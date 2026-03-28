@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -28,53 +29,66 @@ func Main(args map[string]interface{}) map[string]interface{} {
 
 	topic := getHeader("topic")
 	if topic == "" {
+		log.Println("[webhook-translator] ERROR: missing required header: topic")
 		return map[string]interface{}{
 			"statusCode": 400,
 			"body":       "missing required header: topic",
 		}
 	}
 
+	log.Printf("[webhook-translator] incoming call: topic=%s ntfy_url=%s", topic, ntfyURL)
+
 	// Image is in alarm.thumbnail as a data URL (data:image/jpeg;base64,...)
 	imageBase64 := ""
 	if alarm, ok := args["alarm"].(map[string]interface{}); ok {
 		imageBase64, _ = alarm["thumbnail"].(string)
 	}
+	var req *http.Request
+	var err error
+
 	if imageBase64 == "" {
-		return map[string]interface{}{
-			"statusCode": 400,
-			"body":       "missing required field: alarm.thumbnail",
+		// No picture available — send a plain-text message instead
+		log.Printf("[webhook-translator] no picture found, forwarding text message to %s/%s", strings.TrimRight(ntfyURL, "/"), topic)
+		req, err = http.NewRequest(http.MethodPost, strings.TrimRight(ntfyURL, "/")+"/"+topic, strings.NewReader("No picture"))
+		if err != nil {
+			return map[string]interface{}{
+				"statusCode": 500,
+				"body":       "failed to create request: " + err.Error(),
+			}
 		}
-	}
+		req.Header.Set("Content-Type", "text/plain")
+	} else {
+		// Derive filename from the data URL mime type, then strip the prefix
+		filename := "image.jpg"
+		if strings.HasPrefix(imageBase64, "data:") {
+			if semi := strings.Index(imageBase64, ";"); semi >= 0 {
+				filename = mimeTypeToFilename(imageBase64[5:semi])
+			}
+			if comma := strings.Index(imageBase64, ","); comma >= 0 {
+				imageBase64 = imageBase64[comma+1:]
+			}
+		}
 
-	// Derive filename from the data URL mime type, then strip the prefix
-	filename := "image.jpg"
-	if strings.HasPrefix(imageBase64, "data:") {
-		if semi := strings.Index(imageBase64, ";"); semi >= 0 {
-			filename = mimeTypeToFilename(imageBase64[5:semi])
+		data, decErr := base64.StdEncoding.DecodeString(imageBase64)
+		if decErr != nil {
+			return map[string]interface{}{
+				"statusCode": 400,
+				"body":       "invalid base64 payload: " + decErr.Error(),
+			}
 		}
-		if comma := strings.Index(imageBase64, ","); comma >= 0 {
-			imageBase64 = imageBase64[comma+1:]
-		}
-	}
 
-	data, err := base64.StdEncoding.DecodeString(imageBase64)
-	if err != nil {
-		return map[string]interface{}{
-			"statusCode": 400,
-			"body":       "invalid base64 payload: " + err.Error(),
+		log.Printf("[webhook-translator] picture found (%s, %d bytes), forwarding to %s/%s", filename, len(data), strings.TrimRight(ntfyURL, "/"), topic)
+		req, err = http.NewRequest(http.MethodPut, strings.TrimRight(ntfyURL, "/")+"/"+topic, bytes.NewReader(data))
+		if err != nil {
+			return map[string]interface{}{
+				"statusCode": 500,
+				"body":       "failed to create request: " + err.Error(),
+			}
 		}
-	}
 
-	req, err := http.NewRequest(http.MethodPut, strings.TrimRight(ntfyURL, "/")+"/"+topic, bytes.NewReader(data))
-	if err != nil {
-		return map[string]interface{}{
-			"statusCode": 500,
-			"body":       "failed to create request: " + err.Error(),
-		}
+		req.Header.Set("Filename", filename)
+		req.Header.Set("Content-Type", detectContentType(filename))
 	}
-
-	req.Header.Set("Filename", filename)
-	req.Header.Set("Content-Type", detectContentType(filename))
 
 	// Forward Title, Tags and Authorization headers from the incoming request to ntfy
 	if title := getHeader("title"); title != "" {
@@ -89,12 +103,14 @@ func Main(args map[string]interface{}) map[string]interface{} {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		log.Printf("[webhook-translator] ERROR: publish to ntfy failed: %v", err)
 		return map[string]interface{}{
 			"statusCode": 502,
 			"body":       "publish failed: " + err.Error(),
 		}
 	}
 	defer resp.Body.Close()
+	log.Printf("[webhook-translator] ntfy responded with status %d", resp.StatusCode)
 
 	var out map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
