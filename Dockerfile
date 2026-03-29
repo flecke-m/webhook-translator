@@ -20,5 +20,5 @@ WORKDIR /app
 COPY --from=builder /app/webhook-translator .
 
 USER app
-EXPOSE 80
+EXPOSE 8080
 ENTRYPOINT ["/app/webhook-translator"]

@@ -24,18 +24,22 @@ Configuration is passed entirely via HTTP request headers (no secrets in the bod
 docker build -t webhook-translator .
 ```
 
+Or use the prebuilt image fleckem/webhook-translator:v0.0.4
+
 ### Run
 
 ```sh
-docker run -p 80:80 webhook-translator
+docker run -p 8080:8080 webhook-translator
 ```
 
-The service listens on port **80** inside the container.
+The service listens on port **8080** inside the container.
+
+Note: Updated to port 8080 as of image version fleckem/webhook-translator:v0.0.4 to support non-root deployments in Kubernetes
 
 ### Example request
 
 ```sh
-curl -X POST http://localhost:80 \
+curl -X POST http://localhost:8080 \
   -H "Authorization: Bearer tk_yourtoken" \
   -H "Title: Es klingelt" \
   -H "Tags: door,bell" \

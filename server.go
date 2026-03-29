@@ -45,8 +45,8 @@ func main() {
 		json.NewEncoder(w).Encode(result)
 	})
 
-	log.Println("listening on :80")
-	if err := http.ListenAndServe(":80", nil); err != nil {
+	log.Println("listening on :8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal(err)
 	}
 }
